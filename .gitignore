@@ -1,3 +1,4 @@
 # entorno de ejecucion
 */build/
 */bin/
+.gradle/

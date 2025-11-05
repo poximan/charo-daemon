@@ -230,30 +230,35 @@ public final class SystemMonitor implements AutoCloseable {
     }
 
     private double readCpuTemperature() {
-        HardwareAbstractionLayer hal = this.hardware;
-        if (hal == null) {
-            return UNKNOWN_TEMPERATURE;
-        }
-        try {
-            Sensors sensors = hal.getSensors();
-            if (sensors == null) {
-                return UNKNOWN_TEMPERATURE;
-            }
-            double value = sensors.getCpuTemperature();
-            if (Double.isFinite(value) && value > 0.0d && value < MAX_REASONABLE_CPU_TEMP_C) {
-                lastKnownCpuTempC = value;
-                return value;
-            }
-        } catch (Throwable ignored) {
-            // Ignored: unavailability of sensors is not fatal for the monitor
-        }
-        // Fallbacks for Windows via WMI (PowerShell / CIM). This is best-effort.
+        // On Windows, avoid OSHI's WMI path to prevent COM exception warnings.
         if (isWindows()) {
             double wmiTemp = readCpuTemperatureViaWmi();
             if (Double.isFinite(wmiTemp) && wmiTemp > 0.0d && wmiTemp < MAX_REASONABLE_CPU_TEMP_C) {
                 lastKnownCpuTempC = wmiTemp;
                 return wmiTemp;
             }
+            // If Windows fallback failed, return last known (if any) and skip OSHI to avoid noisy logs.
+            if (Double.isFinite(lastKnownCpuTempC) && lastKnownCpuTempC > 0.0d) {
+                return lastKnownCpuTempC;
+            }
+            return UNKNOWN_TEMPERATURE;
+        }
+        // Non-Windows: try OSHI sensors first
+        HardwareAbstractionLayer hal = this.hardware;
+        if (hal == null) {
+            return Double.isFinite(lastKnownCpuTempC) && lastKnownCpuTempC > 0.0d ? lastKnownCpuTempC : UNKNOWN_TEMPERATURE;
+        }
+        try {
+            Sensors sensors = hal.getSensors();
+            if (sensors != null) {
+                double value = sensors.getCpuTemperature();
+                if (Double.isFinite(value) && value > 0.0d && value < MAX_REASONABLE_CPU_TEMP_C) {
+                    lastKnownCpuTempC = value;
+                    return value;
+                }
+            }
+        } catch (Throwable ignored) {
+            // Ignored: unavailability of sensors is not fatal for the monitor
         }
         // If all else fails, try to return the last known good value (if any)
         if (Double.isFinite(lastKnownCpuTempC) && lastKnownCpuTempC > 0.0d) {

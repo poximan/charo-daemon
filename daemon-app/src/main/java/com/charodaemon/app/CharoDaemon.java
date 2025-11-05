@@ -25,6 +25,8 @@ import oshi.SystemInfo;
 import oshi.hardware.CentralProcessor;
 import oshi.hardware.ComputerSystem;
 import oshi.hardware.HardwareAbstractionLayer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class CharoDaemon {
     private static final Logger LOG = LoggerFactory.getLogger(CharoDaemon.class);
@@ -251,5 +253,3 @@ public final class CharoDaemon {
         return trimmed.replaceAll("[^a-zA-Z0-9_-]", "-").toLowerCase(Locale.ROOT);
     }
 }
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
