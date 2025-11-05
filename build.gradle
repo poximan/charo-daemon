@@ -1,0 +1,26 @@
+subprojects {
+    apply plugin: 'java'
+
+    group = 'com.charodaemon'
+    version = '0.1.0-SNAPSHOT'
+
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+
+    repositories {
+        mavenCentral()
+    }
+
+    dependencies {
+        // Unified logging API for all modules
+        implementation 'org.slf4j:slf4j-api:2.0.12'
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+    }
+}

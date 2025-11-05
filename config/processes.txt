@@ -1,0 +1,6 @@
+# Add one process name per line. Case-insensitive.
+# Examples (remove the hash to activate):
+# chrome.exe
+# java.exe
+CalculatorApp.exe
+Notepad.exe
