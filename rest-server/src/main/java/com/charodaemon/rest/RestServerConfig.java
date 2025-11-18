@@ -4,13 +4,19 @@ import java.util.Objects;
 
 public final class RestServerConfig {
     private final int port;
+    private final String instanceId;
 
     private RestServerConfig(Builder builder) {
         this.port = builder.port;
+        this.instanceId = builder.instanceId;
     }
 
     public int port() {
         return port;
+    }
+
+    public String instanceId() {
+        return instanceId;
     }
 
     public static Builder builder() {
@@ -18,7 +24,8 @@ public final class RestServerConfig {
     }
 
     public static final class Builder {
-        private int port = 8080;
+        private Integer port;
+        private String instanceId;
 
         private Builder() {
         }
@@ -31,7 +38,21 @@ public final class RestServerConfig {
             return this;
         }
 
+        public Builder instanceId(String instanceId) {
+            if (instanceId == null || instanceId.isBlank()) {
+                throw new IllegalArgumentException("instanceId requerido");
+            }
+            this.instanceId = instanceId;
+            return this;
+        }
+
         public RestServerConfig build() {
+            if (port == null) {
+                throw new IllegalStateException("REST port is required");
+            }
+            if (instanceId == null || instanceId.isBlank()) {
+                throw new IllegalStateException("instanceId is required");
+            }
             return new RestServerConfig(this);
         }
     }

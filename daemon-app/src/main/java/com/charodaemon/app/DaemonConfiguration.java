@@ -16,11 +16,14 @@ public final class DaemonConfiguration {
     private final Path networkInterfaceExcludePath;
     private final int restPort;
     private final String mqttBrokerUri;
-    private final String mqttTopic;
+    private final String mqttTopicTemplate;
     private final int mqttSampleWindow;
     private final String mqttClientId;
     private final String mqttUsername;
     private final String mqttPassword;
+    private final boolean mqttAvailabilityEnabled;
+    private final String mqttAvailabilityTopic;
+    private final boolean mqttRetainAvailability;
 
     private DaemonConfiguration(Builder builder) {
         this.monitorInterval = builder.monitorInterval;
@@ -28,11 +31,14 @@ public final class DaemonConfiguration {
         this.networkInterfaceExcludePath = builder.networkInterfaceExcludePath;
         this.restPort = builder.restPort;
         this.mqttBrokerUri = builder.mqttBrokerUri;
-        this.mqttTopic = builder.mqttTopic;
+        this.mqttTopicTemplate = builder.mqttTopicTemplate;
         this.mqttSampleWindow = builder.mqttSampleWindow;
         this.mqttClientId = builder.mqttClientId;
         this.mqttUsername = builder.mqttUsername;
         this.mqttPassword = builder.mqttPassword;
+        this.mqttAvailabilityEnabled = builder.mqttAvailabilityEnabled;
+        this.mqttAvailabilityTopic = builder.mqttAvailabilityTopic;
+        this.mqttRetainAvailability = builder.mqttRetainAvailability;
     }
 
     public Duration monitorInterval() {
@@ -55,9 +61,7 @@ public final class DaemonConfiguration {
         return mqttBrokerUri;
     }
 
-    public String mqttTopic() {
-        return mqttTopic;
-    }
+    public Optional<String> mqttTopicTemplate() { return Optional.ofNullable(mqttTopicTemplate); }
 
     public int mqttSampleWindow() {
         return mqttSampleWindow;
@@ -75,6 +79,10 @@ public final class DaemonConfiguration {
         return Optional.ofNullable(mqttPassword);
     }
 
+    public boolean mqttAvailabilityEnabled() { return mqttAvailabilityEnabled; }
+    public Optional<String> mqttAvailabilityTopic() { return Optional.ofNullable(mqttAvailabilityTopic); }
+    public boolean mqttRetainAvailability() { return mqttRetainAvailability; }
+
     public static DaemonConfiguration load(Path path) throws IOException {
         Objects.requireNonNull(path, "path");
         Properties properties = new Properties();
@@ -84,62 +92,85 @@ public final class DaemonConfiguration {
         return fromProperties(path.getParent(), properties);
     }
 
-    public static DaemonConfiguration fromProperties(Path baseDir, Properties properties) {
+    public static DaemonConfiguration fromProperties(Path baseDir, Properties properties) throws IOException {
         Builder builder = new Builder();
 
-        long intervalSeconds = parseLong(properties.getProperty("monitor.interval.seconds"), 20);
-        builder.monitorInterval(Duration.ofSeconds(Math.max(1, intervalSeconds)));
+        long intervalSeconds = requireLong(properties, "monitor.interval.seconds", 1);
+        builder.monitorInterval(Duration.ofSeconds(intervalSeconds));
 
-        String processFile = properties.getProperty("monitor.process.watchlist");
-        if (processFile != null && !processFile.isBlank() && baseDir != null) {
-            builder.processWatchListPath(baseDir.resolve(processFile.trim()));
-        } else if (processFile != null && !processFile.isBlank()) {
-            builder.processWatchListPath(Paths.get(processFile.trim()));
+        Path processPath = requirePath(properties, baseDir, "monitor.process.watchlist");
+        builder.processWatchListPath(processPath);
+
+        Path ifaceExcludePath = requirePath(properties, baseDir, "monitor.network.interface.exclude");
+        builder.networkInterfaceExcludePath(ifaceExcludePath);
+
+        int port = Math.toIntExact(requireLong(properties, "rest.port", 1));
+        if (port <= 0 || port > 65535) {
+            throw new IllegalArgumentException("rest.port fuera de rango: " + port);
         }
-
-        String interfaceExcludeFile = properties.getProperty("monitor.network.interface.exclude");
-        if (interfaceExcludeFile != null && !interfaceExcludeFile.isBlank() && baseDir != null) {
-            builder.networkInterfaceExcludePath(baseDir.resolve(interfaceExcludeFile.trim()));
-        } else if (interfaceExcludeFile != null && !interfaceExcludeFile.isBlank()) {
-            builder.networkInterfaceExcludePath(Paths.get(interfaceExcludeFile.trim()));
-        }
-
-        int port = (int) parseLong(properties.getProperty("rest.port"), 8080);
         builder.restPort(port);
 
-        builder.mqttBrokerUri(properties.getProperty("mqtt.broker.uri", "tcp://localhost:1883"));
-        builder.mqttTopic(properties.getProperty("mqtt.topic", "charodaemon/metrics"));
-        builder.mqttSampleWindow((int) parseLong(properties.getProperty("mqtt.sample.window"), 5));
-        builder.mqttClientId(properties.getProperty("mqtt.client.id"));
-        String mqttUsername = trimToNull(properties.getProperty("mqtt.username"));
-        if (mqttUsername != null) {
-            builder.mqttUsername(mqttUsername);
-        }
-        String mqttPassword = trimToNull(properties.getProperty("mqtt.password"));
-        if (mqttPassword != null) {
-            builder.mqttPassword(mqttPassword);
-        }
+        builder.mqttBrokerUri(requireString(properties, "mqtt.broker.uri"));
+        builder.mqttTopicTemplate(requireString(properties, "mqtt.topic.template"));
+        builder.mqttSampleWindow(Math.toIntExact(requireLong(properties, "mqtt.sample.window", 1)));
+        builder.mqttClientId(requireString(properties, "mqtt.client.id"));
+        builder.mqttUsername(requireString(properties, "mqtt.username"));
+        builder.mqttPassword(requireString(properties, "mqtt.password"));
+
+        boolean availabilityEnabled = requireBoolean(properties, "mqtt.availability.enabled");
+        builder.mqttAvailabilityEnabled(availabilityEnabled);
+        builder.mqttAvailabilityTopic(requireString(properties, "mqtt.availability.topic"));
+        builder.mqttRetainAvailability(requireBoolean(properties, "mqtt.retain.availability"));
 
         return builder.build();
     }
 
-    private static long parseLong(String value, long defaultValue) {
-        if (value == null || value.isBlank()) {
-            return defaultValue;
+    private static long requireLong(Properties props, String key, long minValue) {
+        String raw = props.getProperty(key);
+        if (raw == null || raw.trim().isEmpty()) {
+            throw new IllegalArgumentException("Falta la propiedad obligatoria: " + key);
         }
         try {
-            return Long.parseLong(value.trim());
-        } catch (NumberFormatException e) {
-            return defaultValue;
+            long v = Long.parseLong(raw.trim());
+            if (v < minValue) {
+                throw new IllegalArgumentException("Valor invalido (" + v + ") para " + key);
+            }
+            return v;
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("No es numero valido: " + key + "='" + raw + "'", ex);
         }
     }
 
-    private static String trimToNull(String value) {
-        if (value == null) {
-            return null;
+    private static boolean requireBoolean(Properties props, String key) {
+        String raw = props.getProperty(key);
+        if (raw == null || raw.trim().isEmpty()) {
+            throw new IllegalArgumentException("Falta la propiedad obligatoria: " + key);
         }
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
+        String t = raw.trim().toLowerCase();
+        if ("true".equals(t)) return true;
+        if ("false".equals(t)) return false;
+        throw new IllegalArgumentException("Valor booleano invalido para " + key + ": '" + raw + "'");
+    }
+
+    private static String requireString(Properties props, String key) {
+        String raw = props.getProperty(key);
+        if (raw == null) {
+            throw new IllegalArgumentException("Falta la propiedad obligatoria: " + key);
+        }
+        String val = raw.trim();
+        if (val.isEmpty()) {
+            throw new IllegalArgumentException("Propiedad vacia: " + key);
+        }
+        return val;
+    }
+
+    private static Path requirePath(Properties props, Path baseDir, String key) throws IOException {
+        String rel = requireString(props, key);
+        Path p = baseDir != null ? baseDir.resolve(rel).normalize() : Paths.get(rel).normalize();
+        if (!Files.exists(p)) {
+            throw new IOException("No existe el archivo configurado en " + key + ": " + p.toAbsolutePath());
+        }
+        return p;
     }
 
     public static Builder builder() {
@@ -147,16 +178,19 @@ public final class DaemonConfiguration {
     }
 
     public static final class Builder {
-        private Duration monitorInterval = Duration.ofSeconds(20);
+        private Duration monitorInterval;
         private Path processWatchListPath;
         private Path networkInterfaceExcludePath;
-        private int restPort = 8080;
-        private String mqttBrokerUri = "tcp://localhost:1883";
-        private String mqttTopic = "charodaemon/metrics";
-        private int mqttSampleWindow = 5;
-        private String mqttClientId = "charo-daemon";
+        private Integer restPort;
+        private String mqttBrokerUri;
+        private String mqttTopicTemplate;
+        private Integer mqttSampleWindow;
+        private String mqttClientId;
         private String mqttUsername;
         private String mqttPassword;
+        private Boolean mqttAvailabilityEnabled;
+        private String mqttAvailabilityTopic;
+        private Boolean mqttRetainAvailability;
 
         private Builder() {
         }
@@ -186,8 +220,8 @@ public final class DaemonConfiguration {
             return this;
         }
 
-        public Builder mqttTopic(String mqttTopic) {
-            this.mqttTopic = Objects.requireNonNull(mqttTopic, "mqttTopic");
+        public Builder mqttTopicTemplate(String mqttTopicTemplate) {
+            this.mqttTopicTemplate = Objects.requireNonNull(mqttTopicTemplate, "mqttTopicTemplate");
             return this;
         }
 
@@ -211,7 +245,36 @@ public final class DaemonConfiguration {
             return this;
         }
 
+        public Builder mqttAvailabilityEnabled(boolean enabled) {
+            this.mqttAvailabilityEnabled = enabled;
+            return this;
+        }
+
+        public Builder mqttAvailabilityTopic(String topic) {
+            this.mqttAvailabilityTopic = Objects.requireNonNull(topic, "mqttAvailabilityTopic");
+            return this;
+        }
+
+        public Builder mqttRetainAvailability(boolean retain) {
+            this.mqttRetainAvailability = retain;
+            return this;
+        }
+
         public DaemonConfiguration build() {
+            // Validaciones estrictas: nada por defecto
+            if (monitorInterval == null) throw new IllegalStateException("monitor.interval.seconds requerido");
+            if (processWatchListPath == null) throw new IllegalStateException("monitor.process.watchlist requerido");
+            if (networkInterfaceExcludePath == null) throw new IllegalStateException("monitor.network.interface.exclude requerido");
+            if (restPort == null || restPort <= 0 || restPort > 65535) throw new IllegalStateException("rest.port invalido");
+            if (mqttBrokerUri == null || mqttBrokerUri.isBlank()) throw new IllegalStateException("mqtt.broker.uri requerido");
+            if (mqttTopicTemplate == null || mqttTopicTemplate.isBlank()) throw new IllegalStateException("mqtt.topic.template requerido");
+            if (mqttSampleWindow == null || mqttSampleWindow <= 0) throw new IllegalStateException("mqtt.sample.window invalido");
+            if (mqttClientId == null || mqttClientId.isBlank()) throw new IllegalStateException("mqtt.client.id requerido");
+            if (mqttUsername == null || mqttUsername.isBlank()) throw new IllegalStateException("mqtt.username requerido");
+            if (mqttPassword == null || mqttPassword.isBlank()) throw new IllegalStateException("mqtt.password requerido");
+            if (mqttAvailabilityEnabled == null) throw new IllegalStateException("mqtt.availability.enabled requerido");
+            if (mqttAvailabilityTopic == null || mqttAvailabilityTopic.isBlank()) throw new IllegalStateException("mqtt.availability.topic requerido");
+            if (mqttRetainAvailability == null) throw new IllegalStateException("mqtt.retain.availability requerido");
             return new DaemonConfiguration(this);
         }
     }

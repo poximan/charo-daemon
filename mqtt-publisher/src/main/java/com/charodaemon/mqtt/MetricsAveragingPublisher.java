@@ -1,5 +1,6 @@
 package com.charodaemon.mqtt;
 
+import com.charodaemon.monitor.SystemMonitor;
 import com.charodaemon.monitor.model.SystemMetrics;
 import com.charodaemon.rest.json.GsonFactory;
 import com.google.gson.Gson;
@@ -27,7 +28,7 @@ import org.slf4j.LoggerFactory;
 
 public final class MetricsAveragingPublisher implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(MetricsAveragingPublisher.class);
-    private final RestMetricsClient metricsClient;
+    private final SystemMonitor monitor;
     private final MqttPublisherConfig config;
     private final ScheduledExecutorService scheduler;
     private final Gson gson;
@@ -42,8 +43,8 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
     private volatile ScheduledFuture<?> scheduledTask;
     private MqttClient mqttClient;
 
-    public MetricsAveragingPublisher(RestMetricsClient metricsClient, MqttPublisherConfig config) {
-        this.metricsClient = Objects.requireNonNull(metricsClient, "metricsClient");
+    public MetricsAveragingPublisher(SystemMonitor monitor, MqttPublisherConfig config) {
+        this.monitor = Objects.requireNonNull(monitor, "monitor");
         this.config = Objects.requireNonNull(config, "config");
         this.scheduler = Executors.newSingleThreadScheduledExecutor(new PublisherThreadFactory());
         this.gson = GsonFactory.gson();
@@ -65,7 +66,6 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
         } catch (MqttException e) {
             logMqttException("Unable to connect at startup", e);
         }
-        metricsClient.fetchConfiguration().ifPresent(snapshot -> updateInterval(snapshot.samplingInterval()));
         scheduleTask();
     }
 
@@ -76,7 +76,21 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
                 mqttClient.setCallback(new LoggingCallback());
             }
             if (!mqttClient.isConnected()) {
+                // Configure LWT (availability) if enabled
+                if (config.availabilityEnabled()) {
+                    String willTopic = resolveAvailabilityTopic();
+                    if (willTopic != null) {
+                        MqttMessage will = new MqttMessage("offline".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        will.setQos(1);
+                        will.setRetained(true);
+                        connectOptions.setWill(willTopic, will.getPayload(), will.getQos(), will.isRetained());
+                    }
+                }
                 mqttClient.connect(connectOptions);
+                // Publish ONLINE retained status after successful connect
+                if (config.availabilityEnabled()) {
+                    publishAvailability("online");
+                }
             }
         }
     }
@@ -98,18 +112,18 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
 
     private void pollAndMaybePublishSafely() {
         try {
-            metricsClient.fetchMetrics().ifPresent(sample -> {
-                synchronized (window) {
-                    window.add(sample);
-                    if (window.size() >= config.sampleWindow()) {
-                        AggregatedPayload payload = buildPayload(window);
-                        window.clear();
-                        publish(payload);
-                        metricsClient.fetchConfiguration()
-                                .ifPresent(snapshot -> updateInterval(snapshot.samplingInterval()));
-                    }
+            SystemMetrics sample = monitor.getLatestMetrics();
+            if (sample == null) {
+                return;
+            }
+            synchronized (window) {
+                window.add(sample);
+                if (window.size() >= config.sampleWindow()) {
+                    AggregatedPayload payload = buildPayload(window);
+                    window.clear();
+                    publish(payload);
                 }
-            });
+            }
         } catch (Exception ex) {
             LOG.error("[MQTT] Error during polling/publishing", ex);
         }
@@ -172,8 +186,9 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
         byte[] bytes = gson.toJson(payload).getBytes(java.nio.charset.StandardCharsets.UTF_8);
         MqttMessage message = new MqttMessage(bytes);
         message.setQos(1);
+        String topic = resolvePublishTopic();
         try {
-            mqttClient.publish(config.topic(), message);
+            mqttClient.publish(topic, message);
         } catch (MqttException e) {
             logMqttException("Failed to publish message", e);
         }
@@ -206,6 +221,7 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
             }
         }
         scheduler.shutdown();
+        signalOffline();
         synchronized (mqttLock) {
             if (mqttClient != null) {
                 try {
@@ -244,8 +260,52 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
         int reason = exception.getReasonCode();
         String message = exception.getMessage();
         LOG.error("[MQTT] {} (reason {}): {} [broker={}, clientId={}, topic={}]",
-                context, reason, message, config.brokerUri(), config.clientId(), config.topic(), exception);
+                context, reason, message, config.brokerUri(), config.clientId(), resolvePublishTopic(), exception);
         // Stacktrace is included via last parameter above
+    }
+
+    private String resolvePublishTopic() {
+        String templated = config.topicTemplate().replace("{clientId}", instanceId);
+        return normalizeTopic(templated);
+    }
+
+    private String resolveAvailabilityTopic() {
+        if (!config.availabilityEnabled()) return null;
+        String topic = null;
+        if (config.availabilityTopic().isPresent()) {
+            topic = config.availabilityTopic().get();
+        }
+        if (topic == null) return null;
+        return normalizeTopic(topic.replace("{clientId}", instanceId));
+    }
+
+    public void signalOffline() {
+        synchronized (mqttLock) {
+            publishAvailability("offline");
+        }
+    }
+
+    private void publishAvailability(String status) {
+        String topic = resolveAvailabilityTopic();
+        if (topic == null || mqttClient == null || !mqttClient.isConnected()) return;
+        try {
+            MqttMessage msg = new MqttMessage(status.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            msg.setQos(1);
+            msg.setRetained(config.retainAvailability());
+            mqttClient.publish(topic, msg);
+        } catch (MqttException e) {
+            logMqttException("Failed to publish availability", e);
+        }
+    }
+
+    private static String normalizeTopic(String raw) {
+        String t = raw.trim();
+        while (t.contains("//")) {
+            t = t.replace("//", "/");
+        }
+        if (t.startsWith("/")) t = t.substring(1);
+        if (t.endsWith("/")) t = t.substring(0, t.length()-1);
+        return t;
     }
 
     public record AggregatedPayload(

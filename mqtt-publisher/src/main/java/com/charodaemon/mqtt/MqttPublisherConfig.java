@@ -7,20 +7,26 @@ import java.util.Optional;
 public final class MqttPublisherConfig {
     private final String brokerUri;
     private final String clientId;
-    private final String topic;
+    private final String topicTemplate; // e.g. "charodaemon/host/{clientId}/metrics" (obligatorio)
     private final int sampleWindow;
     private final Duration pollingInterval;
     private final String username;
     private final char[] password;
+    private final boolean availabilityEnabled;
+    private final String availabilityTopic; // e.g. "charodaemon/host/{clientId}/status"
+    private final boolean retainAvailability;
 
     private MqttPublisherConfig(Builder builder) {
         this.brokerUri = builder.brokerUri;
         this.clientId = builder.clientId != null ? builder.clientId : "charo-daemon-mqtt";
-        this.topic = builder.topic;
+        this.topicTemplate = builder.topicTemplate;
         this.sampleWindow = builder.sampleWindow;
         this.pollingInterval = builder.pollingInterval;
         this.username = builder.username;
         this.password = builder.password != null ? builder.password.clone() : null;
+        this.availabilityEnabled = builder.availabilityEnabled;
+        this.availabilityTopic = builder.availabilityTopic;
+        this.retainAvailability = builder.retainAvailability;
     }
 
     public String brokerUri() {
@@ -31,9 +37,7 @@ public final class MqttPublisherConfig {
         return clientId;
     }
 
-    public String topic() {
-        return topic;
-    }
+    public String topicTemplate() { return topicTemplate; }
 
     public int sampleWindow() {
         return sampleWindow;
@@ -51,18 +55,25 @@ public final class MqttPublisherConfig {
         return password == null ? Optional.empty() : Optional.of(password.clone());
     }
 
+    public boolean availabilityEnabled() { return availabilityEnabled; }
+    public Optional<String> availabilityTopic() { return Optional.ofNullable(availabilityTopic); }
+    public boolean retainAvailability() { return retainAvailability; }
+
     public static Builder builder() {
         return new Builder();
     }
 
     public static final class Builder {
-        private String brokerUri = "tcp://localhost:1883";
+        private String brokerUri;
         private String clientId;
-        private String topic = "charodaemon/metrics";
-        private int sampleWindow = 5;
-        private Duration pollingInterval = Duration.ofSeconds(20);
+        private String topicTemplate; // obligatorio, sin default
+        private int sampleWindow; // >0 requerido
+        private Duration pollingInterval; // requerido
         private String username;
         private char[] password;
+        private Boolean availabilityEnabled; // obligatorio
+        private String availabilityTopic; // obligatorio
+        private Boolean retainAvailability; // obligatorio
 
         private Builder() {
         }
@@ -77,8 +88,8 @@ public final class MqttPublisherConfig {
             return this;
         }
 
-        public Builder topic(String topic) {
-            this.topic = Objects.requireNonNull(topic, "topic");
+        public Builder topicTemplate(String topicTemplate) {
+            this.topicTemplate = Objects.requireNonNull(topicTemplate, "topicTemplate");
             return this;
         }
 
@@ -111,7 +122,32 @@ public final class MqttPublisherConfig {
             return this;
         }
 
+        public Builder availabilityEnabled(boolean availabilityEnabled) {
+            this.availabilityEnabled = availabilityEnabled;
+            return this;
+        }
+
+        public Builder availabilityTopic(String availabilityTopic) {
+            this.availabilityTopic = Objects.requireNonNull(availabilityTopic, "availabilityTopic");
+            return this;
+        }
+
+        public Builder retainAvailability(boolean retainAvailability) {
+            this.retainAvailability = retainAvailability;
+            return this;
+        }
+
         public MqttPublisherConfig build() {
+            if (this.brokerUri == null || this.brokerUri.isBlank()) throw new IllegalArgumentException("brokerUri requerido");
+            if (this.clientId == null || this.clientId.isBlank()) throw new IllegalArgumentException("clientId requerido");
+            if (this.topicTemplate == null || this.topicTemplate.isBlank()) throw new IllegalArgumentException("topicTemplate es obligatorio");
+            if (this.sampleWindow <= 0) throw new IllegalArgumentException("sampleWindow debe ser > 0");
+            if (this.pollingInterval == null || this.pollingInterval.isNegative() || this.pollingInterval.isZero()) throw new IllegalArgumentException("pollingInterval invalido");
+            if (this.username == null) throw new IllegalArgumentException("username requerido");
+            if (this.password == null) throw new IllegalArgumentException("password requerido");
+            if (this.availabilityEnabled == null) throw new IllegalArgumentException("availabilityEnabled requerido");
+            if (this.availabilityTopic == null || this.availabilityTopic.isBlank()) throw new IllegalArgumentException("availabilityTopic requerido");
+            if (this.retainAvailability == null) throw new IllegalArgumentException("retainAvailability requerido");
             return new MqttPublisherConfig(this);
         }
     }

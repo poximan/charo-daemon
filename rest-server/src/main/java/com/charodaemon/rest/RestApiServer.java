@@ -36,6 +36,7 @@ public final class RestApiServer implements AutoCloseable {
     }
 
     private void registerContexts() {
+        httpServer.createContext("/identity", new IdentityHandler());
         httpServer.createContext("/metrics", new MetricsHandler());
         httpServer.createContext("/config", new ConfigHandler());
         httpServer.createContext("/config/interval", new IntervalUpdateHandler());
@@ -69,6 +70,19 @@ public final class RestApiServer implements AutoCloseable {
                 return;
             }
             sendJson(exchange, 200, metrics);
+        }
+    }
+
+    private final class IdentityHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendMethodNotAllowed(exchange, "GET");
+                return;
+            }
+            sendJson(exchange, 200, Map.of(
+                    "instanceId", config.instanceId()
+            ));
         }
     }
 

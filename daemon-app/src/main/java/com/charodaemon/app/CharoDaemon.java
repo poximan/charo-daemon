@@ -6,11 +6,9 @@ import com.charodaemon.rest.RestApiServer;
 import com.charodaemon.rest.RestServerConfig;
 import com.charodaemon.mqtt.MetricsAveragingPublisher;
 import com.charodaemon.mqtt.MqttPublisherConfig;
-import com.charodaemon.mqtt.RestMetricsClient;
 
 import java.io.IOException;
 import java.net.InetAddress;
-import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -44,8 +42,9 @@ public final class CharoDaemon {
         });
 
         try {
-            Path configPath = resolveConfigPath(args);
+            Path configPath = Paths.get("config", "daemon.properties");
             DaemonConfiguration configuration = loadConfiguration(configPath);
+            String resolvedClientId = resolveClientId(configuration);
 
         MonitorSettings.Builder monitorBuilder = MonitorSettings.builder()
                 .samplingInterval(configuration.monitorInterval());
@@ -57,28 +56,33 @@ public final class CharoDaemon {
 
             RestApiServer restServer = new RestApiServer(
                 monitor,
-                RestServerConfig.builder().port(configuration.restPort()).build()
+                RestServerConfig.builder()
+                        .port(configuration.restPort())
+                        .instanceId(resolvedClientId)
+                        .build()
         );
             restServer.start();
 
-        RestMetricsClient metricsClient = new RestMetricsClient(URI.create("http://localhost:" + configuration.restPort()));
-
         MqttPublisherConfig.Builder mqttBuilder = MqttPublisherConfig.builder()
                 .brokerUri(configuration.mqttBrokerUri())
-                .clientId(resolveClientId(configuration))
-                .topic(configuration.mqttTopic())
+                .clientId(resolvedClientId)
                 .sampleWindow(configuration.mqttSampleWindow())
                 .pollingInterval(configuration.monitorInterval());
+        configuration.mqttTopicTemplate().ifPresent(mqttBuilder::topicTemplate);
         configuration.mqttUsername().ifPresent(mqttBuilder::username);
         configuration.mqttPassword().ifPresent(mqttBuilder::password);
+        mqttBuilder.availabilityEnabled(configuration.mqttAvailabilityEnabled());
+        configuration.mqttAvailabilityTopic().ifPresent(mqttBuilder::availabilityTopic);
+        mqttBuilder.retainAvailability(configuration.mqttRetainAvailability());
             MqttPublisherConfig mqttConfig = mqttBuilder.build();
 
-            MetricsAveragingPublisher publisher = new MetricsAveragingPublisher(metricsClient, mqttConfig);
+            MetricsAveragingPublisher publisher = new MetricsAveragingPublisher(monitor, mqttConfig);
             publisher.start();
 
             CountDownLatch shutdownLatch = new CountDownLatch(1);
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 LOG.info("[Daemon] Shutting down...");
+                try { publisher.signalOffline(); } catch (Exception e) { LOG.warn("Error signalling offline", e); }
                 try { publisher.close(); } catch (Exception e) { LOG.warn("Error closing publisher", e); }
                 try { restServer.close(); } catch (Exception e) { LOG.warn("Error closing REST server", e); }
                 try { monitor.close(); } catch (Exception e) { LOG.warn("Error closing monitor", e); }
@@ -100,29 +104,9 @@ public final class CharoDaemon {
 
     private static DaemonConfiguration loadConfiguration(Path configPath) throws IOException {
         if (Files.notExists(configPath)) {
-            LOG.warn("[Daemon] Config file not found at {}. Using defaults.", configPath.toAbsolutePath());
-            return DaemonConfiguration.builder().build();
+            throw new IOException("Config file not found: " + configPath.toAbsolutePath());
         }
         return DaemonConfiguration.load(configPath);
-    }
-
-    private static Path resolveConfigPath(String[] args) {
-        if (args != null && args.length > 0) {
-            return Paths.get(args[0]);
-        }
-        Path defaultPath = Paths.get("config", "daemon.properties");
-        if (Files.exists(defaultPath)) {
-            return defaultPath;
-        }
-        Path currentDir = Paths.get("").toAbsolutePath();
-        Path parent = currentDir.getParent();
-        if (parent != null) {
-            Path parentConfig = parent.resolve("config").resolve("daemon.properties");
-            if (Files.exists(parentConfig)) {
-                return parentConfig;
-            }
-        }
-        return defaultPath;
     }
 
     private static String resolveClientId(DaemonConfiguration configuration) {

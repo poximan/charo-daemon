@@ -50,7 +50,7 @@ public final class MonitorSettings {
     }
 
     public static final class Builder {
-        private Duration samplingInterval = Duration.ofSeconds(20);
+        private Duration samplingInterval;
         private Path processWatchListPath;
         private List<String> initialProcessWatchList;
         private Path networkInterfaceExcludePath;
@@ -85,6 +85,9 @@ public final class MonitorSettings {
         }
 
         public MonitorSettings build() {
+            if (samplingInterval == null) {
+                throw new IllegalStateException("samplingInterval is required");
+            }
             return new MonitorSettings(this);
         }
     }

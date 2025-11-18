@@ -130,8 +130,11 @@ public final class SystemMonitor implements AutoCloseable {
     }
 
     private Duration normalizeInterval(Duration interval) {
-        if (interval == null || interval.isNegative() || interval.isZero()) {
-            return settings.samplingInterval() != null ? settings.samplingInterval() : Duration.ofSeconds(20);
+        if (interval == null) {
+            throw new IllegalArgumentException("samplingInterval cannot be null");
+        }
+        if (interval.isNegative() || interval.isZero()) {
+            throw new IllegalArgumentException("samplingInterval must be positive");
         }
         if (interval.compareTo(MIN_INTERVAL) < 0) {
             return MIN_INTERVAL;
