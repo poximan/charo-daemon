@@ -258,10 +258,55 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
 
     private void logMqttException(String context, MqttException exception) {
         int reason = exception.getReasonCode();
-        String message = exception.getMessage();
-        LOG.error("[MQTT] {} (reason {}): {} [broker={}, clientId={}, topic={}]",
-                context, reason, message, config.brokerUri(), config.clientId(), resolvePublishTopic(), exception);
-        // Stacktrace is included via last parameter above
+        String humanReadable = describeReason(reason);
+        String causeText = describeCause(exception);
+        String broker = config.brokerUri();
+        String clientId = config.clientId();
+        String topic = resolvePublishTopic();
+        if (reason == MqttException.REASON_CODE_CONNECTION_LOST) {
+            LOG.warn("[MQTT] {} - {} (reason {}) [broker={}, clientId={}, topic={}, cause={}]",
+                    context, humanReadable, reason, broker, clientId, topic, causeText);
+        } else {
+            LOG.error("[MQTT] {} - {} (reason {}) [broker={}, clientId={}, topic={}, cause={}]",
+                    context, humanReadable, reason, broker, clientId, topic, causeText);
+        }
+    }
+
+    private static String describeCause(Throwable throwable) {
+        if (throwable == null) {
+            return "desconocida";
+        }
+        Throwable root = throwable;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String type = root.getClass().getSimpleName();
+        String message = root.getMessage();
+        if (message == null || message.trim().isEmpty()) {
+            return type;
+        }
+        return type + ": " + message;
+    }
+
+    private static String describeReason(int reasonCode) {
+        switch (reasonCode) {
+            case MqttException.REASON_CODE_CONNECTION_LOST:
+                return "conexion perdida";
+            case MqttException.REASON_CODE_CLIENT_CONNECTED:
+                return "cliente ya conectado";
+            case MqttException.REASON_CODE_CLIENT_ALREADY_DISCONNECTED:
+                return "cliente ya desconectado";
+            case MqttException.REASON_CODE_CLIENT_NOT_CONNECTED:
+                return "cliente no conectado";
+            case MqttException.REASON_CODE_CLIENT_DISCONNECTING:
+                return "cliente en desconexion";
+            case MqttException.REASON_CODE_MAX_INFLIGHT:
+                return "limite de mensajes en vuelo";
+            case MqttException.REASON_CODE_SERVER_CONNECT_ERROR:
+                return "error al conectar con el broker";
+            default:
+                return "codigo " + reasonCode;
+        }
     }
 
     private String resolvePublishTopic() {
