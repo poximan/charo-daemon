@@ -455,12 +455,15 @@ public final class SystemMonitor implements AutoCloseable {
                         java.util.LinkedHashMap::new
                 ));
 
-        var matching = ProcessHandle.allProcesses()
-                .filter(handle -> handle.info().command().isPresent())
-                .collect(Collectors.groupingBy(
-                        handle -> processKey(handle.info().command().get()),
-                        Collectors.mapping(ProcessHandle::pid, Collectors.toSet())
-                ));
+        var matching = new java.util.LinkedHashMap<String, java.util.Set<Long>>();
+        ProcessHandle.allProcesses().forEach(handle -> {
+            var commandOpt = handle.info().command();
+            if (commandOpt.isEmpty()) {
+                return;
+            }
+            String key = processKey(commandOpt.get());
+            matching.computeIfAbsent(key, k -> new java.util.LinkedHashSet<>()).add(handle.pid());
+        });
 
         List<ProcessStatus> statuses = new ArrayList<>(normalizedNames.size());
         for (var entry : normalizedNames.entrySet()) {

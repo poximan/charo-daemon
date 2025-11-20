@@ -2,5 +2,5 @@
 # Examples (remove the hash to activate):
 # chrome.exe
 # java.exe
-CalculatorApp.exe
-Notepad.exe
+com.docker.backend.exe
+com.docker.build.exe
