@@ -1,6 +1,7 @@
 package com.charodaemon.rest;
 
 import com.charodaemon.monitor.SystemMonitor;
+import com.charodaemon.monitor.model.AggregatedMetricsSnapshot;
 import com.charodaemon.monitor.model.SystemMetrics;
 import com.charodaemon.rest.json.GsonFactory;
 import com.google.gson.Gson;
@@ -16,9 +17,11 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 public final class RestApiServer implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(RestApiServer.class);
@@ -26,10 +29,16 @@ public final class RestApiServer implements AutoCloseable {
     private final RestServerConfig config;
     private final HttpServer httpServer;
     private final Gson gson;
+    private final Supplier<AggregatedMetricsSnapshot> snapshotSupplier;
+    private final long fallbackTimeoutSeconds;
 
-    public RestApiServer(SystemMonitor monitor, RestServerConfig config) throws IOException {
+    public RestApiServer(SystemMonitor monitor, RestServerConfig config,
+                         Supplier<AggregatedMetricsSnapshot> snapshotSupplier,
+                         long fallbackTimeoutSeconds) throws IOException {
         this.monitor = Objects.requireNonNull(monitor, "monitor");
         this.config = Objects.requireNonNull(config, "config");
+        this.snapshotSupplier = Objects.requireNonNull(snapshotSupplier, "snapshotSupplier");
+        this.fallbackTimeoutSeconds = fallbackTimeoutSeconds;
         this.gson = GsonFactory.gson();
         this.httpServer = HttpServer.create(new InetSocketAddress(this.config.port()), 0);
         registerContexts();
@@ -64,12 +73,17 @@ public final class RestApiServer implements AutoCloseable {
                 sendMethodNotAllowed(exchange, "GET");
                 return;
             }
-            SystemMetrics metrics = monitor.getLatestMetrics();
-            if (metrics == null) {
-                sendJson(exchange, 503, Map.of("error", "Metrics not available yet"));
-                return;
+            AggregatedMetricsSnapshot snapshot = snapshotSupplier.get();
+            if (snapshot == null) {
+                SystemMetrics metrics = monitor.getLatestMetrics();
+                if (metrics == null) {
+                    LOG.warn("[REST] /metrics solicitado antes de obtener la primera muestra");
+                    sendJson(exchange, 503, Map.of("error", "Metrics not available yet"));
+                    return;
+                }
+                snapshot = buildFallbackSnapshot(metrics);
             }
-            sendJson(exchange, 200, metrics);
+            sendJson(exchange, 200, snapshot);
         }
     }
 
@@ -191,5 +205,33 @@ public final class RestApiServer implements AutoCloseable {
 
     private java.util.List<String> monitorProcessList() {
         return monitor.currentProcessWatchList();
+    }
+
+    private AggregatedMetricsSnapshot buildFallbackSnapshot(SystemMetrics metrics) {
+        double cpuLoad = metrics.cpuLoad();
+        double temp = metrics.cpuTemperatureCelsius();
+        double memRatio = metrics.usedMemoryRatio();
+        long samplingSeconds = Math.max(1L, monitor.currentSamplingInterval().getSeconds());
+        return new AggregatedMetricsSnapshot(
+                config.instanceId(),
+                Instant.now(),
+                metrics.timestamp(),
+                1,
+                samplingSeconds,
+                fallbackTimeoutSeconds,
+                cpuLoad,
+                cpuLoad,
+                temp,
+                temp,
+                memRatio,
+                memRatio,
+                metrics.freeMemoryBytes(),
+                metrics.totalMemoryBytes(),
+                metrics.freeMemoryBytes(),
+                metrics.totalMemoryBytes(),
+                metrics.networkInterfaces(),
+                metrics.watchedProcesses(),
+                metrics
+        );
     }
 }

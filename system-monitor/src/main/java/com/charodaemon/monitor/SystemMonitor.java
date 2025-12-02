@@ -34,6 +34,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -56,6 +57,7 @@ public final class SystemMonitor implements AutoCloseable {
     private final CopyOnWriteArrayList<String> processWatchList = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<String> interfaceExcludePatterns = new CopyOnWriteArrayList<>();
     private volatile ScheduledFuture<?> scheduledTask;
+    private final AtomicBoolean firstSampleLogged = new AtomicBoolean(false);
 
     public SystemMonitor(MonitorSettings settings) {
         this.settings = Objects.requireNonNull(settings, "settings");
@@ -98,9 +100,21 @@ public final class SystemMonitor implements AutoCloseable {
 
     private void collectSafely() {
         try {
-            latestMetrics.set(collectMetrics());
+            SystemMetrics metrics = collectMetrics();
+            latestMetrics.set(metrics);
+            if (firstSampleLogged.compareAndSet(false, true)) {
+                LOG.info("[SystemMonitor] Primera muestra capturada en {} (cpuLoad={}, freeMemMB={})",
+                        metrics.timestamp(),
+                        metrics.cpuLoad(),
+                        metrics.freeMemoryBytes() / (1024 * 1024));
+            } else if (LOG.isDebugEnabled()) {
+                LOG.debug("[SystemMonitor] Muestra recolectada ts={} cpuLoad={} freeMemMB={}",
+                        metrics.timestamp(),
+                        metrics.cpuLoad(),
+                        metrics.freeMemoryBytes() / (1024 * 1024));
+            }
         } catch (Exception ex) {
-            LOG.warn("[SystemMonitor] Failed to collect metrics", ex);
+            LOG.warn("[SystemMonitor] Failed to collect metrics (interval={} ms)", samplingInterval.toMillis(), ex);
         }
     }
 
@@ -306,9 +320,12 @@ public final class SystemMonitor implements AutoCloseable {
                 }
             }
             // Ensure process is reaped
-            p.waitFor(1, java.util.concurrent.TimeUnit.SECONDS);
+            if (!p.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)) {
+                LOG.warn("[SystemMonitor] WMI temperature query did not finish within 1s");
+                p.destroyForcibly();
+            }
         } catch (Exception ex) {
-            LOG.debug("[SystemMonitor] WMI temperature fallback failed: {}", ex.toString());
+            LOG.warn("[SystemMonitor] WMI temperature fallback failed: {}", ex.toString());
         }
         return UNKNOWN_TEMPERATURE;
     }
@@ -456,14 +473,18 @@ public final class SystemMonitor implements AutoCloseable {
                 ));
 
         var matching = new java.util.LinkedHashMap<String, java.util.Set<Long>>();
-        ProcessHandle.allProcesses().forEach(handle -> {
-            var commandOpt = handle.info().command();
-            if (commandOpt.isEmpty()) {
-                return;
-            }
-            String key = processKey(commandOpt.get());
-            matching.computeIfAbsent(key, k -> new java.util.LinkedHashSet<>()).add(handle.pid());
-        });
+        try {
+            ProcessHandle.allProcesses().forEach(handle -> {
+                var commandOpt = handle.info().command();
+                if (commandOpt.isEmpty()) {
+                    return;
+                }
+                String key = processKey(commandOpt.get());
+                matching.computeIfAbsent(key, k -> new java.util.LinkedHashSet<>()).add(handle.pid());
+            });
+        } catch (Exception ex) {
+            LOG.warn("[SystemMonitor] No se pudo enumerar procesos para watch list", ex);
+        }
 
         List<ProcessStatus> statuses = new ArrayList<>(normalizedNames.size());
         for (var entry : normalizedNames.entrySet()) {

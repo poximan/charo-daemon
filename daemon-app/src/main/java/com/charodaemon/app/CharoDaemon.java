@@ -15,7 +15,6 @@ import java.nio.file.Paths;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Duration;
 import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 
@@ -54,15 +53,6 @@ public final class CharoDaemon {
             SystemMonitor monitor = new SystemMonitor(monitorBuilder.build());
             monitor.start();
 
-            RestApiServer restServer = new RestApiServer(
-                monitor,
-                RestServerConfig.builder()
-                        .port(configuration.restPort())
-                        .instanceId(resolvedClientId)
-                        .build()
-        );
-            restServer.start();
-
         MqttPublisherConfig.Builder mqttBuilder = MqttPublisherConfig.builder()
                 .brokerUri(configuration.mqttBrokerUri())
                 .clientId(resolvedClientId)
@@ -75,8 +65,18 @@ public final class CharoDaemon {
         configuration.mqttAvailabilityTopic().ifPresent(mqttBuilder::availabilityTopic);
         mqttBuilder.retainAvailability(configuration.mqttRetainAvailability());
             MqttPublisherConfig mqttConfig = mqttBuilder.build();
-
             MetricsAveragingPublisher publisher = new MetricsAveragingPublisher(monitor, mqttConfig);
+
+            RestApiServer restServer = new RestApiServer(
+                monitor,
+                RestServerConfig.builder()
+                        .port(configuration.restPort())
+                        .instanceId(resolvedClientId)
+                        .build(),
+                publisher::latestSnapshot,
+                configuration.monitorInterval().getSeconds() * configuration.mqttSampleWindow()
+        );
+            restServer.start();
             publisher.start();
 
             CountDownLatch shutdownLatch = new CountDownLatch(1);
@@ -153,49 +153,29 @@ public final class CharoDaemon {
     }
 
     private static String computeHardwareFingerprint() {
-        try {
-            SystemInfo info = new SystemInfo();
-            HardwareAbstractionLayer hal = info.getHardware();
-            if (hal != null) {
-                ComputerSystem computerSystem = hal.getComputerSystem();
-                if (computerSystem != null) {
-                    String serial = computerSystem.getSerialNumber();
-                    if (isMeaningfulHardwareId(serial)) {
-                        return shortHash(serial);
-                    }
-                    String uuid = computerSystem.getHardwareUUID();
-                    if (isMeaningfulHardwareId(uuid)) {
-                        return shortHash(uuid);
-                    }
-                }
-                CentralProcessor processor = hal.getProcessor();
-                if (processor != null) {
-                    String processorId = processor.getProcessorIdentifier().getProcessorID();
-                    if (isMeaningfulHardwareId(processorId)) {
-                        return shortHash(processorId);
-                    }
-                }
-            }
-        } catch (Throwable ignored) {
-            // Ignored: if OSHI cannot access hardware identifiers we fall back to host-based names
+        
+        SystemInfo info = new SystemInfo();
+        HardwareAbstractionLayer hal = info.getHardware();
+        ComputerSystem computerSystem = hal.getComputerSystem();
+               
+        String uuid = computerSystem.getHardwareUUID();
+    
+        if (isMeaningfulHardwareId(uuid)) {
+            return shortHash(uuid);
         }
-        String fallback = detectHostName();
-        if (isMeaningful(fallback)) {
-            return shortHash(fallback);
-        }
-        return "";
+    
+        return "";      
     }
 
     private static String shortHash(String input) {
-        if (input == null || input.isBlank()) {
-            return "";
-        }
+       
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] bytes = digest.digest(input.getBytes(StandardCharsets.UTF_8));
             StringBuilder builder = new StringBuilder();
-            for (int i = 0; i < bytes.length && builder.length() < 12; i++) {
-                builder.append(String.format(Locale.ROOT, "%02x", bytes[i]));
+            
+            for (int i = 0; i < bytes.length && builder.length() < 6; i++) {
+                builder.append(String.format(Locale.ROOT, "%02x", bytes[i]));                
             }
             if (builder.length() > 0) {
                 return builder.toString();
@@ -203,7 +183,7 @@ public final class CharoDaemon {
         } catch (NoSuchAlgorithmException ignored) {
             // Falls back to sanitized input below
         }
-        return input.replaceAll("[^a-zA-Z0-9]", "").toLowerCase(Locale.ROOT);
+        return "";
     }
 
     private static String tryGetLocalHostName() {
@@ -213,19 +193,20 @@ public final class CharoDaemon {
             return null;
         }
     }
-
-    private static boolean isMeaningful(String value) {
-        return value != null && !value.isBlank() && !"unknown".equalsIgnoreCase(value);
-    }
-
+ 
     private static boolean isMeaningfulHardwareId(String value) {
         if (!isMeaningful(value)) {
             return false;
         }
         String normalized = value.trim().toLowerCase(Locale.ROOT);
-        return !normalized.contains("to be filled") && !normalized.contains("defaultstring") && !normalized.contains("not specified");
+        return !normalized.contains("to be filled") && !normalized.contains("Default string")
+                && !normalized.contains("not specified");
     }
 
+    private static boolean isMeaningful(String value) {
+        return value != null && !value.isBlank() && !"unknown".equalsIgnoreCase(value);
+    }
+    
     private static String sanitize(String input) {
         if (input == null) {
             return "";

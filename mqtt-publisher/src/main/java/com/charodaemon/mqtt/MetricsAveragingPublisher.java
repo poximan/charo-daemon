@@ -15,8 +15,8 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import javax.net.ssl.SSLSocketFactory;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -25,6 +25,8 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.charodaemon.monitor.model.AggregatedMetricsSnapshot;
 
 public final class MetricsAveragingPublisher implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(MetricsAveragingPublisher.class);
@@ -36,12 +38,16 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
     private final String instanceId;
 
     private final Object schedulingLock = new Object();
-    private final List<SystemMetrics> window = new ArrayList<>();
+    private final Deque<SystemMetrics> window = new ArrayDeque<>();
     private final Object mqttLock = new Object();
 
     private volatile Duration pollingInterval;
     private volatile ScheduledFuture<?> scheduledTask;
     private MqttClient mqttClient;
+    private volatile AggregatedMetricsSnapshot latestSnapshot;
+    private final int sampleWindow;
+    private final long timeoutSeconds;
+    private int samplesSincePublish = 0;
 
     public MetricsAveragingPublisher(SystemMonitor monitor, MqttPublisherConfig config) {
         this.monitor = Objects.requireNonNull(monitor, "monitor");
@@ -57,6 +63,9 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
             this.connectOptions.setSocketFactory((SSLSocketFactory) SSLSocketFactory.getDefault());
         }
         this.pollingInterval = config.pollingInterval();
+        this.sampleWindow = Math.max(1, config.sampleWindow());
+        long pollSeconds = Math.max(1L, this.pollingInterval.getSeconds());
+        this.timeoutSeconds = pollSeconds * this.sampleWindow;
         this.instanceId = sanitizeInstanceId(config.clientId());
     }
 
@@ -116,20 +125,32 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
             if (sample == null) {
                 return;
             }
+            AggregatedMetricsSnapshot snapshotToPublish = null;
             synchronized (window) {
-                window.add(sample);
-                if (window.size() >= config.sampleWindow()) {
-                    AggregatedPayload payload = buildPayload(window);
-                    window.clear();
-                    publish(payload);
+                window.addLast(sample);
+                if (window.size() > sampleWindow) {
+                    window.removeFirst();
                 }
+                AggregatedMetricsSnapshot snapshot = buildSnapshot(window);
+                latestSnapshot = snapshot;
+                samplesSincePublish++;
+                if (snapshot != null && window.size() == sampleWindow && samplesSincePublish >= sampleWindow) {
+                    snapshotToPublish = snapshot;
+                    samplesSincePublish = 0;
+                }
+            }
+            if (snapshotToPublish != null) {
+                publish(snapshotToPublish);
             }
         } catch (Exception ex) {
             LOG.error("[MQTT] Error during polling/publishing", ex);
         }
     }
 
-    private AggregatedPayload buildPayload(List<SystemMetrics> samples) {
+    private AggregatedMetricsSnapshot buildSnapshot(Deque<SystemMetrics> samples) {
+        if (samples.isEmpty()) {
+            return null;
+        }
         int sampleCount = samples.size();
         double cpuSum = 0.0;
         int cpuObservations = 0;
@@ -140,8 +161,9 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
         long totalSum = 0L;
 
         for (SystemMetrics sample : samples) {
-            if (sample.cpuLoad() >= 0.0) {
-                cpuSum += sample.cpuLoad();
+            double cpuLoad = sample.cpuLoad();
+            if (cpuLoad >= 0.0) {
+                cpuSum += cpuLoad;
                 cpuObservations++;
             }
             double temperature = sample.cpuTemperatureCelsius();
@@ -159,25 +181,39 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
         double avgUsedRatio = sampleCount == 0 ? 0.0 : usedRatioSum / sampleCount;
         long avgFree = sampleCount == 0 ? 0L : freeSum / sampleCount;
         long avgTotal = sampleCount == 0 ? 0L : totalSum / sampleCount;
-        long windowSeconds = pollingInterval.getSeconds() * sampleCount;
+        long windowSeconds = Math.max(1L, pollingInterval.getSeconds()) * sampleCount;
 
-        SystemMetrics latest = samples.get(sampleCount - 1);
+        SystemMetrics latest = samples.getLast();
+        double latestCpu = latest.cpuLoad();
+        double latestTemp = latest.cpuTemperatureCelsius();
+        double latestMemRatio = latest.usedMemoryRatio();
+        long latestFree = latest.freeMemoryBytes();
+        long latestTotal = latest.totalMemoryBytes();
 
-        return new AggregatedPayload(
+        return new AggregatedMetricsSnapshot(
                 instanceId,
                 Instant.now(),
+                latest.timestamp(),
                 sampleCount,
                 windowSeconds,
+                timeoutSeconds,
+                latestCpu,
                 avgCpu,
+                latestTemp,
                 avgTemperature,
+                latestMemRatio,
                 avgUsedRatio,
+                latestFree,
+                latestTotal,
                 avgFree,
                 avgTotal,
+                latest.networkInterfaces(),
+                latest.watchedProcesses(),
                 latest
         );
     }
 
-    private void publish(AggregatedPayload payload) {
+    private void publish(AggregatedMetricsSnapshot payload) {
         ensureConnected();
         if (mqttClient == null || !mqttClient.isConnected()) {
             LOG.warn("[MQTT] Client is not connected; skipping publish");
@@ -353,18 +389,8 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
         return t;
     }
 
-    public record AggregatedPayload(
-            String instanceId,
-            Instant generatedAt,
-            int samples,
-            long windowSeconds,
-            double averageCpuLoad,
-            double averageCpuTemperatureCelsius,
-            double averageMemoryUsageRatio,
-            long averageFreeMemoryBytes,
-            long averageTotalMemoryBytes,
-            SystemMetrics latestSample
-    ) {
+    public AggregatedMetricsSnapshot latestSnapshot() {
+        return latestSnapshot;
     }
 
     private static final class LoggingCallback implements MqttCallback {
