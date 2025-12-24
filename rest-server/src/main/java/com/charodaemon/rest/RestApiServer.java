@@ -3,6 +3,7 @@ package com.charodaemon.rest;
 import com.charodaemon.monitor.SystemMonitor;
 import com.charodaemon.monitor.model.AggregatedMetricsSnapshot;
 import com.charodaemon.monitor.model.SystemMetrics;
+import com.charodaemon.monitor.model.TemperatureSensorReading;
 import com.charodaemon.rest.json.GsonFactory;
 import com.google.gson.Gson;
 import org.slf4j.Logger;
@@ -19,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
@@ -211,6 +213,7 @@ public final class RestApiServer implements AutoCloseable {
         double cpuLoad = metrics.cpuLoad();
         double temp = metrics.cpuTemperatureCelsius();
         double memRatio = metrics.usedMemoryRatio();
+        String temperatureReport = formatTemperatureReport(metrics.temperatureSensors());
         long samplingSeconds = Math.max(1L, monitor.currentSamplingInterval().getSeconds());
         return new AggregatedMetricsSnapshot(
                 config.instanceId(),
@@ -231,7 +234,23 @@ public final class RestApiServer implements AutoCloseable {
                 metrics.totalMemoryBytes(),
                 metrics.networkInterfaces(),
                 metrics.watchedProcesses(),
+                temperatureReport,
                 metrics
         );
+    }
+
+    private String formatTemperatureReport(List<TemperatureSensorReading> sensors) {
+        if (sensors == null || sensors.isEmpty()) {
+            return "";
+        }
+        String separator = System.lineSeparator();
+        StringBuilder builder = new StringBuilder();
+        for (TemperatureSensorReading reading : sensors) {
+            if (builder.length() > 0) {
+                builder.append(separator);
+            }
+            builder.append(reading.formatLine());
+        }
+        return builder.toString();
     }
 }

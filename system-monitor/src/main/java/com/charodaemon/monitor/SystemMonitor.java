@@ -4,6 +4,7 @@ import com.charodaemon.monitor.config.MonitorSettings;
 import com.charodaemon.monitor.model.NetworkAddressInfo;
 import com.charodaemon.monitor.model.NetworkInterfaceInfo;
 import com.charodaemon.monitor.model.ProcessStatus;
+import com.charodaemon.monitor.model.TemperatureSensorReading;
 import com.charodaemon.monitor.model.SystemMetrics;
 import com.sun.management.OperatingSystemMXBean;
 import oshi.SystemInfo;
@@ -17,6 +18,7 @@ import java.lang.management.ManagementFactory;
 import java.net.InterfaceAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -44,7 +46,6 @@ public final class SystemMonitor implements AutoCloseable {
     private static final Duration MIN_INTERVAL = Duration.ofSeconds(1);
     private static final double UNKNOWN_TEMPERATURE = -1.0;
     private static final double MAX_REASONABLE_CPU_TEMP_C = 150.0;
-
     private final OperatingSystemMXBean osBean;
     private final ScheduledExecutorService executor;
     private final AtomicReference<SystemMetrics> latestMetrics = new AtomicReference<>();
@@ -52,12 +53,14 @@ public final class SystemMonitor implements AutoCloseable {
     private final MonitorSettings settings;
     private final HardwareAbstractionLayer hardware;
     private volatile double lastKnownCpuTempC = UNKNOWN_TEMPERATURE;
+    private volatile List<TemperatureSensorReading> lastKnownTemperatureSensors = Collections.emptyList();
 
     private volatile Duration samplingInterval;
     private final CopyOnWriteArrayList<String> processWatchList = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<String> interfaceExcludePatterns = new CopyOnWriteArrayList<>();
     private volatile ScheduledFuture<?> scheduledTask;
     private final AtomicBoolean firstSampleLogged = new AtomicBoolean(false);
+    private record TemperatureQueryResult(double representativeValue, List<TemperatureSensorReading> readings, boolean fromCache) {}
 
     public SystemMonitor(MonitorSettings settings) {
         this.settings = Objects.requireNonNull(settings, "settings");
@@ -233,12 +236,15 @@ public final class SystemMonitor implements AutoCloseable {
 
         List<NetworkInterfaceInfo> networkInterfaces = collectNetworkInterfaces();
         List<ProcessStatus> processStatuses = collectProcessStatuses();
-        double cpuTemperature = readCpuTemperature();
+        TemperatureQueryResult temperatureResult = readCpuTemperatureDetailed();
+        double cpuTemperature = temperatureResult.representativeValue();
+        List<TemperatureSensorReading> temperatureSensors = temperatureResult.readings();
 
         return new SystemMetrics(
                 Instant.now(),
                 cpuLoad,
                 cpuTemperature,
+                temperatureSensors,
                 totalMemory,
                 freeMemory,
                 networkInterfaces,
@@ -246,88 +252,115 @@ public final class SystemMonitor implements AutoCloseable {
         );
     }
 
-    private double readCpuTemperature() {
-        // On Windows, avoid OSHI's WMI path to prevent COM exception warnings.
-        if (isWindows()) {
-            double wmiTemp = readCpuTemperatureViaWmi();
-            if (Double.isFinite(wmiTemp) && wmiTemp > 0.0d && wmiTemp < MAX_REASONABLE_CPU_TEMP_C) {
-                lastKnownCpuTempC = wmiTemp;
-                return wmiTemp;
+    private TemperatureQueryResult readCpuTemperatureDetailed() {
+        List<TemperatureSensorReading> readings = isWindows() ? readWindowsTemperatureSensors() : readNonWindowsTemperatureSensors();
+        if (!readings.isEmpty()) {
+            double representative = selectRepresentativeTemperature(readings);
+            if (Double.isFinite(representative) && representative > 0.0d) {
+                lastKnownCpuTempC = representative;
+            } else {
+                LOG.warn("[SystemMonitor] Ninguna lectura valida en {}", readings);
             }
-            // If Windows fallback failed, return last known (if any) and skip OSHI to avoid noisy logs.
-            if (Double.isFinite(lastKnownCpuTempC) && lastKnownCpuTempC > 0.0d) {
-                return lastKnownCpuTempC;
-            }
-            return UNKNOWN_TEMPERATURE;
+            lastKnownTemperatureSensors = readings;
+            return new TemperatureQueryResult(representative, readings, false);
         }
-        // Non-Windows: try OSHI sensors first
-        HardwareAbstractionLayer hal = this.hardware;
-        if (hal == null) {
-            return Double.isFinite(lastKnownCpuTempC) && lastKnownCpuTempC > 0.0d ? lastKnownCpuTempC : UNKNOWN_TEMPERATURE;
+        if (Double.isFinite(lastKnownCpuTempC) && lastKnownCpuTempC > 0.0d && !lastKnownTemperatureSensors.isEmpty()) {
+            LOG.warn("[SystemMonitor] No se obtuvieron sensores de temperatura en esta muestra, devolviendo la ultima lectura valida");
+            return new TemperatureQueryResult(lastKnownCpuTempC, lastKnownTemperatureSensors, true);
         }
-        try {
-            Sensors sensors = hal.getSensors();
-            if (sensors != null) {
-                double value = sensors.getCpuTemperature();
-                if (Double.isFinite(value) && value > 0.0d && value < MAX_REASONABLE_CPU_TEMP_C) {
-                    lastKnownCpuTempC = value;
-                    return value;
-                }
-            }
-        } catch (Throwable ignored) {
-            // Ignored: unavailability of sensors is not fatal for the monitor
-        }
-        // If all else fails, try to return the last known good value (if any)
-        if (Double.isFinite(lastKnownCpuTempC) && lastKnownCpuTempC > 0.0d) {
-            return lastKnownCpuTempC;
-        }
-        return UNKNOWN_TEMPERATURE;
+        LOG.warn("[SystemMonitor] No se pudieron obtener sensores de temperatura");
+        return new TemperatureQueryResult(UNKNOWN_TEMPERATURE, Collections.emptyList(), false);
     }
-
     private static boolean isWindows() {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         return os.contains("win");
     }
 
-    private double readCpuTemperatureViaWmi() {
-        // Uses PowerShell CIM query: returns temperature in tenths of Kelvin
-        // We convert to Celsius: (raw / 10.0) - 273.15
+    private List<TemperatureSensorReading> readWindowsTemperatureSensors() {
+        List<TemperatureSensorReading> readings = new ArrayList<>();
         ProcessBuilder pb = new ProcessBuilder(
                 "powershell.exe",
                 "-NoProfile",
                 "-ExecutionPolicy", "Bypass",
                 "-Command",
-                "try { $t = Get-CimInstance -Namespace root/wmi MSAcpi_ThermalZoneTemperature | Select-Object -First 1 -ExpandProperty CurrentTemperature; if ($t) { [Console]::WriteLine($t) } } catch {}"
+                "wmic /namespace:\\\\root\\wmi PATH MSAcpi_ThermalZoneTemperature get CurrentTemperature"
         );
         pb.redirectErrorStream(true);
         try {
             Process p = pb.start();
-            try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
+            try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
+                int sensorIndex = 0;
                 while ((line = r.readLine()) != null) {
-                    line = line.trim();
-                    if (line.isEmpty()) continue;
-                    // Expect an integer like 3000 (tenths of Kelvin)
-                    try {
-                        double raw = Double.parseDouble(line);
-                        double celsius = (raw / 10.0) - 273.15;
-                        if (Double.isFinite(celsius) && celsius > 0.0d && celsius < MAX_REASONABLE_CPU_TEMP_C) {
-                            return celsius;
-                        }
-                    } catch (NumberFormatException ignored) {
-                        // try next line if any
+                    line = stripBom(line.trim());
+                    if (line.isEmpty() || line.equalsIgnoreCase("CurrentTemperature")) {
+                        continue;
                     }
+                    readings.add(decodeKelvinReading("sensor-" + (++sensorIndex), line));
                 }
             }
-            // Ensure process is reaped
-            if (!p.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)) {
-                LOG.warn("[SystemMonitor] WMI temperature query did not finish within 1s");
+            if (!p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                LOG.warn("[SystemMonitor] Consulta WMI de temperatura excedio 2s");
                 p.destroyForcibly();
             }
         } catch (Exception ex) {
-            LOG.warn("[SystemMonitor] WMI temperature fallback failed: {}", ex.toString());
+            LOG.warn("[SystemMonitor] Lectura WMI de temperatura fallo: {}", ex.toString());
         }
-        return UNKNOWN_TEMPERATURE;
+        return readings;
+    }
+
+    private List<TemperatureSensorReading> readNonWindowsTemperatureSensors() {
+        List<TemperatureSensorReading> readings = new ArrayList<>();
+        HardwareAbstractionLayer hal = this.hardware;
+        if (hal == null) {
+            return readings;
+        }
+        try {
+            Sensors sensors = hal.getSensors();
+            if (sensors != null) {
+                double value = sensors.getCpuTemperature();
+                boolean valid = Double.isFinite(value) && value > 0.0d && value < MAX_REASONABLE_CPU_TEMP_C;
+                readings.add(new TemperatureSensorReading("oshi", value, valid));
+            }
+        } catch (Throwable ex) {
+            LOG.warn("[SystemMonitor] Lectura OSHI de temperatura fallo: {}", ex.toString());
+        }
+        return readings;
+    }
+
+    private TemperatureSensorReading decodeKelvinReading(String source, String rawValue) {
+        try {
+            double raw = Double.parseDouble(rawValue);
+            double celsius = (raw / 10.0) - 273.15;
+            boolean valid = Double.isFinite(celsius) && celsius > 0.0d && celsius < MAX_REASONABLE_CPU_TEMP_C;
+            return new TemperatureSensorReading(source, celsius, valid);
+        } catch (NumberFormatException ex) {
+            LOG.warn("[SystemMonitor] Valor de temperatura no numerico ({}) para {}", rawValue, source);
+            return new TemperatureSensorReading(source, UNKNOWN_TEMPERATURE, false);
+        }
+    }
+
+    private double selectRepresentativeTemperature(List<TemperatureSensorReading> readings) {
+        double best = UNKNOWN_TEMPERATURE;
+        for (TemperatureSensorReading reading : readings) {
+            if (!reading.valid()) {
+                continue;
+            }
+            double value = reading.celsius();
+            if (!Double.isFinite(value)) {
+                continue;
+            }
+            if (value > best) {
+                best = value;
+            }
+        }
+        return best;
+    }
+    private static String stripBom(String value) {
+        if (value != null && !value.isEmpty() && value.charAt(0) == '\uFEFF') {
+            return value.substring(1);
+        }
+        return value;
     }
 
     private List<NetworkInterfaceInfo> collectNetworkInterfaces() {
@@ -525,3 +558,23 @@ public final class SystemMonitor implements AutoCloseable {
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

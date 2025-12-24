@@ -7,6 +7,7 @@ public record SystemMetrics(
         Instant timestamp,
         double cpuLoad,
         double cpuTemperatureCelsius,
+        List<TemperatureSensorReading> temperatureSensors,
         long totalMemoryBytes,
         long freeMemoryBytes,
         List<NetworkInterfaceInfo> networkInterfaces,
@@ -17,3 +18,6 @@ public record SystemMetrics(
         return totalMemoryBytes == 0 ? 0D : (double) used / totalMemoryBytes;
     }
 }
+
+
+

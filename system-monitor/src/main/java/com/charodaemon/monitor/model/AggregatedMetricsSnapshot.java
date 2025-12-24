@@ -22,6 +22,7 @@ public record AggregatedMetricsSnapshot(
         long averageTotalMemoryBytes,
         List<NetworkInterfaceInfo> networkInterfaces,
         List<ProcessStatus> watchedProcesses,
+        String temperatureSensorsReport,
         SystemMetrics latestSample
 ) {
 }

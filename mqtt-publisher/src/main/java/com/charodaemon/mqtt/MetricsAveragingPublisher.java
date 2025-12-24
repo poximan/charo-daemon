@@ -2,6 +2,7 @@ package com.charodaemon.mqtt;
 
 import com.charodaemon.monitor.SystemMonitor;
 import com.charodaemon.monitor.model.SystemMetrics;
+import com.charodaemon.monitor.model.TemperatureSensorReading;
 import com.charodaemon.rest.json.GsonFactory;
 import com.google.gson.Gson;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
@@ -16,6 +17,7 @@ import javax.net.ssl.SSLSocketFactory;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.List;
 import java.util.Deque;
 import java.util.Objects;
 import java.util.concurrent.Executors;
@@ -189,6 +191,7 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
         double latestMemRatio = latest.usedMemoryRatio();
         long latestFree = latest.freeMemoryBytes();
         long latestTotal = latest.totalMemoryBytes();
+        String temperatureReport = formatTemperatureReport(latest.temperatureSensors());
 
         return new AggregatedMetricsSnapshot(
                 instanceId,
@@ -209,10 +212,25 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
                 avgTotal,
                 latest.networkInterfaces(),
                 latest.watchedProcesses(),
+                temperatureReport,
                 latest
         );
     }
 
+    private static String formatTemperatureReport(List<TemperatureSensorReading> sensors) {
+        if (sensors == null || sensors.isEmpty()) {
+            return "";
+        }
+        String separator = System.lineSeparator();
+        StringBuilder builder = new StringBuilder();
+        for (TemperatureSensorReading reading : sensors) {
+            if (builder.length() > 0) {
+                builder.append(separator);
+            }
+            builder.append(reading.formatLine());
+        }
+        return builder.toString();
+    }
     private void publish(AggregatedMetricsSnapshot payload) {
         ensureConnected();
         if (mqttClient == null || !mqttClient.isConnected()) {
@@ -410,3 +428,6 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
         }
     }
 }
+
+
+
