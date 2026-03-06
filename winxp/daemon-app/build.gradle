@@ -1,0 +1,14 @@
+plugins {
+    id 'application'
+}
+
+application {
+    mainClass = 'com.charodaemon.app.CharoDaemon'
+}
+
+dependencies {
+    implementation project(':system-monitor')
+    implementation project(':rest-server')
+    implementation project(':mqtt-publisher')
+    runtimeOnly 'ch.qos.logback:logback-classic:1.1.11'
+}

@@ -1,0 +1,22 @@
+subprojects {
+    apply plugin: 'java'
+
+    group = 'com.charodaemon'
+    version = '0.1.0-SNAPSHOT'
+
+    sourceCompatibility = '1.6'
+    targetCompatibility = '1.6'
+
+    repositories {
+        mavenCentral()
+    }
+
+    dependencies {
+        implementation 'org.slf4j:slf4j-api:1.7.36'
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.compilerArgs << '-Xlint:-options'
+    }
+}

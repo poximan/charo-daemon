@@ -1,6 +1,16 @@
 # entorno de ejecucion
-*/build/
-*/bin/
+**/build/
+**/bin/
+**/classes/
+**/java8/
 .gradle/
 logs/*
 .tmp/
+
+# distribucion: ignorar todo salvo config
+**/dist/**
+!**/dist/config/
+!**/dist/config/**
+
+daemon-bajar.ps1
+daemon-subir.ps1

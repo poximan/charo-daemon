@@ -1,0 +1,22 @@
+[
+  {"tag": "ETE_CDA14_SAL8_252_E_CRR"},
+  {"tag": "ETE_CDA13_SAL7_252_E_CRR"},
+  {"tag": "ETE_CDA06_SAL3_252_E_CRR"},
+  {"tag": "ETE_CDA07_SAL4_252_E_CRR"},
+  {"tag": "ETE_CDA11_SAL5_252_E_CRR"},
+  {"tag": "ETE_CDA12_SAL6_252_E_CRR"},
+  {"tag": "ETE_CDA04_SAL1_252_E_CRR"},
+  {"tag": "ETE_CDA05_SAL2_252_E_CRR"},
+  {"tag": "ETE_CDA01_ENT_252_E_CRR"},
+  {"tag": "ETE_CDA16_ENT_252_E_CRR"},
+  {"tag": "EC1_CD1_INT_252_ECRR"},
+  {"tag": "EC1_CD2_INT_252_ECRR"},
+  {"tag": "EC1_CD4_INT_252_ECRR"},
+  {"tag": "EC1_CD5_INT_252_ECRR"},
+  {"tag": "EC1_CD3_INT_252_ECRR"},
+  {"tag": "ETSR_V13_CDA02_SAL1_INT_ECRR"},
+  {"tag": "ETSR_V33_CDA05_TP1_INT_ECRR"},
+  {"tag": "ETED_CDA03_SAL_252_E_CRR"},
+  {"tag": "ETED_CDA03_SAL_352_E_CRR"},
+  {"tag": "ETED_CDA02_SAL_352_E_CRR"}
+]

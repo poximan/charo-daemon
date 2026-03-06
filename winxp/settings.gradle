@@ -1,0 +1,8 @@
+rootProject.name = "charo-daemon-winxp"
+
+include(
+    "system-monitor",
+    "rest-server",
+    "mqtt-publisher",
+    "daemon-app"
+)
