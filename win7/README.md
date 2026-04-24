@@ -10,7 +10,7 @@ El modulo daemon-app enlaza a los tres anteriores y ofrece un proceso ejecutable
 
 ## Integracion con otros proyectos
 
-- monimonitor (server central) y/o cualquier consumidor se suscriben al broker MQTT en los topicos normalizados `charodaemon/host/{clientId}/metrics` y `charodaemon/host/{clientId}/status`.
+- lechuza-server (server central) y/o cualquier consumidor se suscriben al broker MQTT en los topicos normalizados `charodaemon/host/{clientId}/metrics` y `charodaemon/host/{clientId}/status`.
 - Panelito (app Android) consume exclusivamente por MQTT. No utiliza HTTP.
 - La API HTTP incluida en este proyecto es solo para uso interno del daemon (telemetria local y ajuste de configuracion) y para herramientas de depuracion; no es el canal de consumo de Panelito.
 
