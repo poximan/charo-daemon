@@ -51,8 +51,6 @@ public final class RestApiServer {
         httpServer.createContext("/identity", new IdentityHandler());
         httpServer.createContext("/metrics", new MetricsHandler());
         httpServer.createContext("/config", new ConfigHandler());
-        httpServer.createContext("/config/interval", new IntervalUpdateHandler());
-        httpServer.createContext("/config/processes", new ProcessListUpdateHandler());
     }
 
     public void start() {

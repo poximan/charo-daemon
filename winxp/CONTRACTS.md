@@ -24,10 +24,10 @@ El repo todavia no esta completamente alineado con el esquema objetivo de este d
 Contrato vigente observado en codigo:
 
 - `charo-daemon` ya publica en `charodaemon/host/{clientId}/metrics` y `charodaemon/host/{clientId}/status`
-- `panelito` consume esos topicos directos de `charo-daemon`
-- `charito-service` publica `charito/whitelist/instances` como topico auxiliar de reconciliacion
-- `lechuza-server` sigue usando para movil los topicos `exemys/estado/*` y `exemys/eventos/email`
-- `panelito` dispara pedidos RPC por `app/req/{accion}` y recibe respuesta en topicos de estado ya suscriptos
+- `charito-service` consume `charo-daemon` y publica el estado consolidado en `charito/state`
+- `panelito` consume `charito/state`; no consume topicos directos de `charo-daemon`
+- `lechuza-server` usa para movil topicos normalizados `lechuza-server/*`
+- `panelito` dispara pedidos RPC por `lechuza-server/rpc/req/{accion}` y recibe respuesta en `lechuza-server/rpc/res/{clientId}/{corr}`
 
 Regla de refactor:
 
@@ -52,7 +52,7 @@ mqtt.availability.enabled=true
 mqtt.retain.availability=true
 ```
 
-Panelito debe suscribirse a: `charodaemon/host/+/metrics` y `charodaemon/host/+/status`.
+`panelito` no se suscribe a estos topicos. `charito-service` es el unico consumidor autorizado para consolidar el estado y republicarlo en `charito/state`.
 
 ## 2. Hypervisor (lechuza-server)
 

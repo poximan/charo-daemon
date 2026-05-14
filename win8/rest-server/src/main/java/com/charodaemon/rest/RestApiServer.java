@@ -69,9 +69,6 @@ public final class RestApiServer implements AutoCloseable {
         httpServer.createContext("/identity", new IdentityHandler());
         httpServer.createContext("/metrics", new MetricsHandler());
         httpServer.createContext("/config", new ConfigHandler());
-        httpServer.createContext("/config/interval", new IntervalUpdateHandler());
-        httpServer.createContext("/config/processes", new ProcessListUpdateHandler());
-        httpServer.createContext("/scada", new ScadaToggleHandler());
         httpServer.createContext("/scada/tags", new ScadaTagHandler());
     }
 
