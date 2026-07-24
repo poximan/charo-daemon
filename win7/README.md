@@ -32,6 +32,7 @@ No existe publicacion legada ni dual-publish. Solo se publica en el topico norma
 
 ```
 config/
+  daemon.properties.example # Plantilla versionada sin datos locales
   daemon.properties     # Configuracion principal del daemon
   processes.txt         # Lista de procesos a vigilar (uno por linea)
   network-interface-excludes.txt # Palabras clave para filtrar interfaces virtuales/no deseadas
@@ -42,6 +43,9 @@ daemon-app/
 ```
 
 ## Configuracion
+
+En una instalacion nueva, copiar `config/daemon.properties.example` como
+`config/daemon.properties`. El archivo resultante es local y no se versiona.
 
 Editar exclusivamente `config/daemon.properties` para ajustar:
 

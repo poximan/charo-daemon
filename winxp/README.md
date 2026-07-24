@@ -33,5 +33,8 @@ Implementacion de charo-daemon para Windows XP SP3 (2002), orientada a ejecucion
 
 ## Configuracion
 
+En una instalacion nueva, copiar `config/daemon.properties.example` como
+`config/daemon.properties`. El archivo resultante es local y no se versiona.
+
 Se usan las mismas claves de `daemon.properties` que win7/win8.
 No hay defaults silenciosos: faltantes invalidan inicio.
