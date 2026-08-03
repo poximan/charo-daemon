@@ -98,7 +98,7 @@ public final class SystemMonitor implements AutoCloseable {
             if (scheduledTask != null && !scheduledTask.isCancelled()) {
                 return;
             }
-            scheduledTask = executor.scheduleAtFixedRate(
+            scheduledTask = executor.scheduleWithFixedDelay(
                     this::collectSafely,
                     0,
                     samplingInterval.toMillis(),
@@ -142,7 +142,7 @@ public final class SystemMonitor implements AutoCloseable {
             this.samplingInterval = normalized;
             if (scheduledTask != null) {
                 scheduledTask.cancel(false);
-                scheduledTask = executor.scheduleAtFixedRate(
+                scheduledTask = executor.scheduleWithFixedDelay(
                         this::collectSafely,
                         0,
                         samplingInterval.toMillis(),

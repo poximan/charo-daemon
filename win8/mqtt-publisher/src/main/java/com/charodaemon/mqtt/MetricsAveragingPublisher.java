@@ -114,7 +114,7 @@ public final class MetricsAveragingPublisher implements AutoCloseable {
                 scheduledTask.cancel(false);
             }
             long periodMillis = Math.max(1000L, pollingInterval.toMillis());
-            scheduledTask = scheduler.scheduleAtFixedRate(
+            scheduledTask = scheduler.scheduleWithFixedDelay(
                     this::pollAndMaybePublishSafely,
                     0,
                     periodMillis,

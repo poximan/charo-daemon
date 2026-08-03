@@ -78,7 +78,7 @@ public final class SystemMonitor {
             if (scheduledTask != null && !scheduledTask.isCancelled()) {
                 return;
             }
-            scheduledTask = executor.scheduleAtFixedRate(new Runnable() {
+            scheduledTask = executor.scheduleWithFixedDelay(new Runnable() {
                 public void run() {
                     collectSafely();
                 }
@@ -101,7 +101,7 @@ public final class SystemMonitor {
             this.samplingIntervalSeconds = normalized;
             if (scheduledTask != null) {
                 scheduledTask.cancel(false);
-                scheduledTask = executor.scheduleAtFixedRate(new Runnable() {
+                scheduledTask = executor.scheduleWithFixedDelay(new Runnable() {
                     public void run() {
                         collectSafely();
                     }

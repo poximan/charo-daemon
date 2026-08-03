@@ -97,7 +97,7 @@ public final class MetricsAveragingPublisher {
                 scheduledTask.cancel(false);
             }
             long periodSeconds = Math.max(1L, config.pollingIntervalSeconds());
-            scheduledTask = scheduler.scheduleAtFixedRate(new Runnable() {
+            scheduledTask = scheduler.scheduleWithFixedDelay(new Runnable() {
                 public void run() {
                     pollAndMaybePublishSafely();
                 }
