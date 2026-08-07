@@ -22,9 +22,3 @@ mqtt.password=contrasesesenia
 mqtt.availability.enabled=true
 mqtt.availability.topic=charodaemon/host/{clientId}/status
 mqtt.retain.availability=true
-
-# SCADA adapter
-rest.scada.enabled=false
-rest.scada.script=..\\scada-adapter\\citec-adapter-runner.ps1
-rest.scada.timeout.seconds=40
-rest.scada.poll.interval.seconds=30

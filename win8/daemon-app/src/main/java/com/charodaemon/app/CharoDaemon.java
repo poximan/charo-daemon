@@ -71,13 +71,7 @@ public final class CharoDaemon {
 
             RestServerConfig.Builder restBuilder = RestServerConfig.builder()
                     .port(configuration.restPort())
-                    .instanceId(resolvedClientId)
-                    .scadaEnabled(configuration.scadaEnabled())
-                    .scadaTimeout(configuration.scadaTimeout())
-                    .scadaPollInterval(configuration.scadaPollInterval())
-                    .configFile(configPath);
-            configuration.scadaScriptPath().ifPresent(restBuilder::scadaScriptPath);
-            restBuilder.powershellPath(resolveHostPowerShellPath());
+                    .instanceId(resolvedClientId);
 
             RestApiServer restServer = new RestApiServer(
                 monitor,
@@ -243,15 +237,4 @@ public final class CharoDaemon {
         return trimmed.replaceAll("[^a-zA-Z0-9_-]", "-").toLowerCase(Locale.ROOT);
     }
 
-    private static Path resolveHostPowerShellPath() {
-        String systemRoot = System.getenv("SystemRoot");
-        if (systemRoot == null || systemRoot.isBlank()) {
-            throw new IllegalStateException("Variable de entorno SystemRoot no definida");
-        }
-        Path path = Paths.get(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe").normalize();
-        if (!Files.exists(path)) {
-            throw new IllegalStateException("PowerShell x64 no encontrado en " + path.toAbsolutePath());
-        }
-        return path;
-    }
 }

@@ -9,7 +9,6 @@ Implementacion de charo-daemon para Windows XP SP3 (2002), orientada a ejecucion
 - Publicacion MQTT en topicos normalizados:
   - `charodaemon/host/{clientId}/metrics`
   - `charodaemon/host/{clientId}/status`
-- Sin soporte SCADA adapter en esta variante.
 
 ## Particularidades XP
 

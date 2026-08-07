@@ -1,6 +1,6 @@
 # Charo Daemon Win8
 
-Servicio Java 17 para metricas de sistema, procesos vigilados, publicacion MQTT y adaptacion SCADA.
+Servicio Java 17 para metricas de sistema, procesos vigilados y publicacion MQTT.
 
 ## Modulos
 
@@ -13,7 +13,7 @@ Servicio Java 17 para metricas de sistema, procesos vigilados, publicacion MQTT 
 
 - Metricas: `charodaemon/host/{clientId}/metrics`.
 - Disponibilidad LWT retenida: `charodaemon/host/{clientId}/status` con `online`/`offline`.
-- HTTP: `GET /metrics`, `GET /config`, `POST /config/interval`, `POST /config/processes`, `/scada` y `/scada/tags`.
+- HTTP: `GET /metrics`, `GET /config`, `POST /config/interval` y `POST /config/processes`.
 
 Panelito consume MQTT, no la API HTTP.
 

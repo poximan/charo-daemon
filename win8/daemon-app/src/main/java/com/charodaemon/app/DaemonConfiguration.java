@@ -25,10 +25,6 @@ public final class DaemonConfiguration {
     private final boolean mqttAvailabilityEnabled;
     private final String mqttAvailabilityTopic;
     private final boolean mqttRetainAvailability;
-    private final boolean scadaEnabled;
-    private final Path scadaScriptPath;
-    private final Duration scadaTimeout;
-    private final Duration scadaPollInterval;
     private DaemonConfiguration(Builder builder) {
         this.monitorInterval = builder.monitorInterval;
         this.processWatchListPath = builder.processWatchListPath;
@@ -44,10 +40,6 @@ public final class DaemonConfiguration {
         this.mqttAvailabilityEnabled = builder.mqttAvailabilityEnabled;
         this.mqttAvailabilityTopic = builder.mqttAvailabilityTopic;
         this.mqttRetainAvailability = builder.mqttRetainAvailability;
-        this.scadaEnabled = builder.scadaEnabled != null && builder.scadaEnabled;
-        this.scadaScriptPath = builder.scadaScriptPath;
-        this.scadaTimeout = builder.scadaTimeout != null ? builder.scadaTimeout : Duration.ofSeconds(30);
-        this.scadaPollInterval = builder.scadaPollInterval != null ? builder.scadaPollInterval : Duration.ofSeconds(30);
     }
 
     public Duration monitorInterval() {
@@ -98,14 +90,6 @@ public final class DaemonConfiguration {
 
     public boolean mqttRetainAvailability() { return mqttRetainAvailability; }
 
-    public boolean scadaEnabled() { return scadaEnabled; }
-
-    public Optional<Path> scadaScriptPath() { return Optional.ofNullable(scadaScriptPath); }
-
-    public Duration scadaTimeout() { return scadaTimeout; }
-
-    public Duration scadaPollInterval() { return scadaPollInterval; }
-
     public static DaemonConfiguration load(Path path) throws IOException {
         Objects.requireNonNull(path, "path");
         Properties properties = new Properties();
@@ -139,24 +123,6 @@ public final class DaemonConfiguration {
         builder.mqttAvailabilityEnabled(availabilityEnabled);
         builder.mqttAvailabilityTopic(requireString(properties, "mqtt.availability.topic"));
         builder.mqttRetainAvailability(requireBoolean(properties, "mqtt.retain.availability"));
-        boolean scadaEnabled = optionalBoolean(properties, "rest.scada.enabled", false);
-        builder.scadaEnabled(scadaEnabled);
-        Path scriptPath = resolveOptionalPath(properties, baseDir, "rest.scada.script");
-        if (scriptPath != null) {
-            builder.scadaScriptPath(scriptPath);
-        }
-        long timeout = optionalLong(properties, "rest.scada.timeout.seconds", 30);
-        builder.scadaTimeout(Duration.ofSeconds(Math.max(25, timeout)));
-        long pollInterval = optionalLong(properties, "rest.scada.poll.interval.seconds", 30);
-        builder.scadaPollInterval(Duration.ofSeconds(Math.max(10, pollInterval)));
-        if (scadaEnabled) {
-            if (scriptPath == null) {
-                throw new IllegalStateException("rest.scada.script requerido cuando rest.scada.enabled=true");
-            }
-            if (!Files.exists(scriptPath)) {
-                throw new IOException("No existe el script configurado en rest.scada.script: " + scriptPath.toAbsolutePath());
-            }
-        }
         return builder.build();
     }
 
@@ -208,39 +174,6 @@ public final class DaemonConfiguration {
         return p;
     }
 
-    private static boolean optionalBoolean(Properties props, String key, boolean defaultValue) {
-        String raw = props.getProperty(key);
-        if (raw == null || raw.trim().isEmpty()) {
-            return defaultValue;
-        }
-        String t = raw.trim().toLowerCase();
-        if ("true".equals(t)) return true;
-        if ("false".equals(t)) return false;
-        throw new IllegalArgumentException("Valor booleano invalido para " + key + ": '" + raw + "'");
-    }
-
-    private static long optionalLong(Properties props, String key, long defaultValue) {
-        String raw = props.getProperty(key);
-        if (raw == null || raw.trim().isEmpty()) {
-            return defaultValue;
-        }
-        try {
-            return Long.parseLong(raw.trim());
-        } catch (NumberFormatException ex) {
-            throw new IllegalArgumentException("No es numero valido: " + key + "='" + raw + "'", ex);
-        }
-    }
-
-    private static Path resolveOptionalPath(Properties props, Path baseDir, String key) {
-        String raw = props.getProperty(key);
-        if (raw == null || raw.trim().isEmpty()) {
-            return null;
-        }
-        return baseDir != null
-                ? baseDir.resolve(raw.trim()).normalize()
-                : Paths.get(raw.trim()).normalize();
-    }
-
     public static Builder builder() {
         return new Builder();
     }
@@ -259,10 +192,6 @@ public final class DaemonConfiguration {
         private Boolean mqttAvailabilityEnabled;
         private String mqttAvailabilityTopic;
         private Boolean mqttRetainAvailability;
-        private Boolean scadaEnabled;
-        private Path scadaScriptPath;
-        private Duration scadaTimeout;
-        private Duration scadaPollInterval;
         private Builder() {
         }
 
@@ -336,26 +265,6 @@ public final class DaemonConfiguration {
             return this;
         }
 
-        public Builder scadaEnabled(boolean enabled) {
-            this.scadaEnabled = enabled;
-            return this;
-        }
-
-        public Builder scadaScriptPath(Path path) {
-            this.scadaScriptPath = path;
-            return this;
-        }
-
-        public Builder scadaTimeout(Duration timeout) {
-            this.scadaTimeout = timeout;
-            return this;
-        }
-
-        public Builder scadaPollInterval(Duration interval) {
-            this.scadaPollInterval = interval;
-            return this;
-        }
-
         public DaemonConfiguration build() {
             if (monitorInterval == null) throw new IllegalStateException("monitor.interval.seconds requerido");
             if (processWatchListPath == null) throw new IllegalStateException("monitor.process.watchlist requerido");
@@ -371,10 +280,6 @@ public final class DaemonConfiguration {
             if (mqttAvailabilityEnabled == null) throw new IllegalStateException("mqtt.availability.enabled requerido");
             if (mqttAvailabilityTopic == null || mqttAvailabilityTopic.isBlank()) throw new IllegalStateException("mqtt.availability.topic requerido");
             if (mqttRetainAvailability == null) throw new IllegalStateException("mqtt.retain.availability requerido");
-            if (Boolean.TRUE.equals(scadaEnabled)) {
-                if (scadaScriptPath == null) throw new IllegalStateException("rest.scada.script requerido");
-                if (scadaPollInterval == null) scadaPollInterval = Duration.ofSeconds(30);
-            }
             return new DaemonConfiguration(this);
         }
     }

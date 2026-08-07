@@ -15,7 +15,7 @@ Servicio Java 17 para metricas de sistema, procesos vigilados y publicacion MQTT
 - Disponibilidad LWT retenida: `charodaemon/host/{clientId}/status` con `online`/`offline`.
 - HTTP local: `GET /metrics`, `GET /config`, `POST /config/interval` y `POST /config/processes`.
 
-Panelito consume MQTT, no la API HTTP. Win7 no expone `/scada` ni `/scada/tags`.
+Panelito consume MQTT, no la API HTTP.
 
 ## Configuracion
 
